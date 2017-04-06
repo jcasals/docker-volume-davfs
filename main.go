@@ -239,13 +239,13 @@ func (d *sshfsDriver) mountVolume(v *sshfsVolume) error {
 		cmd = fmt.Sprintf("echo %s | %s -o workaround=rename -o password_stdin", v.Password, cmd)
 	}
 	logrus.Debug(cmd)
-	return exec.Command("sh", "-c", cmd).Run()
+	return run(cmd)
 }
 
 func (d *sshfsDriver) unmountVolume(target string) error {
 	cmd := fmt.Sprintf("umount %s", target)
 	logrus.Debug(cmd)
-	return exec.Command("sh", "-c", cmd).Run()
+	return run(cmd)
 }
 
 func responseError(err string) volume.Response {
@@ -266,4 +266,12 @@ func main() {
 	h := volume.NewHandler(d)
 	logrus.Infof("listening on %s", socketAddress)
 	logrus.Error(h.ServeUnix("", socketAddress))
+}
+
+func run(cmd string) error {
+	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+	if err != nil {
+		logrus.Error(string(out))
+	}
+	return err
 }
