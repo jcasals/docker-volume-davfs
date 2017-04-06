@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/go-plugins-helpers/volume"
 )
 
@@ -35,8 +33,10 @@ type sshfsDriver struct {
 	volumes   map[string]*sshfsVolume
 }
 
+var debugf = func(format string, args ...interface{}) (int, error) { return 0, nil }
+
 func newSshfsDriver(root string) (*sshfsDriver, error) {
-	logrus.WithField("method", "new driver").Debug(root)
+	debugf("root=%s\n", root)
 
 	d := &sshfsDriver{
 		root:      filepath.Join(root, "volumes"),
@@ -47,7 +47,7 @@ func newSshfsDriver(root string) (*sshfsDriver, error) {
 	data, err := ioutil.ReadFile(d.statePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			logrus.WithField("statePath", d.statePath).Debug("no state found")
+			fmt.Printf("statePath not found: %s\n", d.statePath)
 		} else {
 			return nil, err
 		}
@@ -63,17 +63,17 @@ func newSshfsDriver(root string) (*sshfsDriver, error) {
 func (d *sshfsDriver) saveState() {
 	data, err := json.Marshal(d.volumes)
 	if err != nil {
-		logrus.WithField("statePath", d.statePath).Error(err)
+		fmt.Printf("statePath=%s err=%v\n", d.statePath, err)
 		return
 	}
 
 	if err := ioutil.WriteFile(d.statePath, data, 0644); err != nil {
-		logrus.WithField("savestate", d.statePath).Error(err)
+		fmt.Printf("statePath=%s err=%v\n", d.statePath, err)
 	}
 }
 
 func (d *sshfsDriver) Create(r volume.Request) volume.Response {
-	logrus.WithField("method", "create").Debugf("%#v", r)
+	debugJSON("create", r)
 
 	d.Lock()
 	defer d.Unlock()
@@ -105,7 +105,7 @@ func (d *sshfsDriver) Create(r volume.Request) volume.Response {
 }
 
 func (d *sshfsDriver) Remove(r volume.Request) volume.Response {
-	logrus.WithField("method", "remove").Debugf("%#v", r)
+	debugJSON("remove", r)
 
 	d.Lock()
 	defer d.Unlock()
@@ -126,8 +126,10 @@ func (d *sshfsDriver) Remove(r volume.Request) volume.Response {
 	return volume.Response{}
 }
 
+var debugJSON = func(method string, x interface{}) {}
+
 func (d *sshfsDriver) Path(r volume.Request) volume.Response {
-	logrus.WithField("method", "path").Debugf("%#v", r)
+	debugJSON("path", r)
 
 	d.RLock()
 	defer d.RUnlock()
@@ -141,7 +143,7 @@ func (d *sshfsDriver) Path(r volume.Request) volume.Response {
 }
 
 func (d *sshfsDriver) Mount(r volume.MountRequest) volume.Response {
-	logrus.WithField("method", "mount").Debugf("%#v", r)
+	debugJSON("mount", r)
 
 	d.Lock()
 	defer d.Unlock()
@@ -176,7 +178,7 @@ func (d *sshfsDriver) Mount(r volume.MountRequest) volume.Response {
 }
 
 func (d *sshfsDriver) Unmount(r volume.UnmountRequest) volume.Response {
-	logrus.WithField("method", "unmount").Debugf("%#v", r)
+	debugJSON("unmount", r)
 
 	d.Lock()
 	defer d.Unlock()
@@ -198,7 +200,7 @@ func (d *sshfsDriver) Unmount(r volume.UnmountRequest) volume.Response {
 }
 
 func (d *sshfsDriver) Get(r volume.Request) volume.Response {
-	logrus.WithField("method", "get").Debugf("%#v", r)
+	debugJSON("get", r)
 
 	d.Lock()
 	defer d.Unlock()
@@ -212,7 +214,7 @@ func (d *sshfsDriver) Get(r volume.Request) volume.Response {
 }
 
 func (d *sshfsDriver) List(r volume.Request) volume.Response {
-	logrus.WithField("method", "list").Debugf("%#v", r)
+	debugJSON("list", r)
 
 	d.Lock()
 	defer d.Unlock()
@@ -225,7 +227,7 @@ func (d *sshfsDriver) List(r volume.Request) volume.Response {
 }
 
 func (d *sshfsDriver) Capabilities(r volume.Request) volume.Response {
-	logrus.WithField("method", "capabilities").Debugf("%#v", r)
+	debugJSON("capabilities", r)
 
 	return volume.Response{Capabilities: volume.Capability{Scope: "local"}}
 }
@@ -236,42 +238,49 @@ func (d *sshfsDriver) mountVolume(v *sshfsVolume) error {
 		cmd = fmt.Sprintf("%s -p %s", cmd, v.Port)
 	}
 	if v.Password != "" {
-		cmd = fmt.Sprintf("echo %s | %s -o workaround=rename -o password_stdin", v.Password, cmd)
+		cmd = fmt.Sprintf("%s -o workaround=rename -o password_stdin", cmd)
 	}
-	logrus.Debug(cmd)
+	debugf("cmd=%s\n", cmd)
+	if v.Password != "" {
+		cmd = fmt.Sprintf("echo %s | %s", v.Password, cmd)
+	}
 	return run(cmd)
 }
 
 func (d *sshfsDriver) unmountVolume(target string) error {
 	cmd := fmt.Sprintf("umount %s", target)
-	logrus.Debug(cmd)
+	debugf("cmd=%s\n", cmd)
 	return run(cmd)
 }
 
 func responseError(err string) volume.Response {
-	logrus.Error(err)
+	fmt.Println(err)
 	return volume.Response{Err: err}
 }
 
 func main() {
 	debug := os.Getenv("DEBUG")
 	if ok, _ := strconv.ParseBool(debug); ok {
-		logrus.SetLevel(logrus.DebugLevel)
+		debugJSON = func(method string, x interface{}) {
+			b, _ := json.Marshal(x)
+			fmt.Printf("method=%s %s\n", method, b)
+		}
+		debugf = fmt.Printf
 	}
 
 	d, err := newSshfsDriver("/mnt")
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
 	}
 	h := volume.NewHandler(d)
-	logrus.Infof("listening on %s", socketAddress)
-	logrus.Error(h.ServeUnix("", socketAddress))
+	fmt.Println("listening on", socketAddress)
+	fmt.Println(h.ServeUnix("", socketAddress))
 }
 
 func run(cmd string) error {
 	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
 	if err != nil {
-		logrus.Error(string(out))
+		fmt.Println(string(out))
 	}
 	return err
 }
