@@ -21,6 +21,7 @@ read_timeout    30\n\
 retry           10\n\
 max_retry       300\n\
 dir_refresh     30\n\
+use_locks       0\n\
 # file_refresh    10\n\
 ' >> /etc/davfs2/davfs2.conf
 COPY --from=builder /go/bin/docker-volume-davfs .
